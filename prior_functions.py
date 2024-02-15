@@ -5,9 +5,10 @@ import pymc as pm
 import plotly.express as px
 import plotly.graph_objects as go
 from scipy.stats import gaussian_kde
+from typing import Dict
 
 @st.cache_data # 👈 Add the caching decorator, make app run faster
-def draw_samples_from_prior(dist: pm.Distribution, num_samples: int = 10_000,
+def draw_samples_from_prior(dist: pm.Distribution, num_samples: int = 50_000,
                             seed=None, **kwargs) -> np.ndarray:
     """
     Draws samples from the prior distribution of a given PyMC distribution.
@@ -76,3 +77,57 @@ def plot_prior_distribution(draws, nbins=100, opacity=0.1, title="Prior Distribu
     
     # Return the plot
     return fig
+
+
+@st.cache_data # 👈 Add the caching decorator, make app run faster
+def find_optimal_gamma_parameters(lower: float, upper: float, mass: float, 
+                                  scaling_factor: int = 100, maxiter: int = 1000) -> Dict[str, float]:
+    """
+    Finds the optimal parameters for a Gamma distribution given constraints on the lower and upper
+    quantiles and a specified mass (confidence level) under those quantiles. Uses multiple initial
+    guesses to improve the reliability of finding a suitable solution.
+
+    Parameters:
+    - lower (float): The lower bound of the quantile range for the Gamma distribution.
+    - upper (float): The upper bound of the quantile range for the Gamma distribution.
+    - mass (float): The mass (probability/confidence) between the lower and upper quantiles.
+    - scaling_factor (int, optional): A factor used to scale down the lower and upper bounds
+      to avoid optimization issues with large values. Defaults to 100.
+    - maxiter (int, optional): Maximum number of iterations for the optimizer. Defaults to 1000.
+
+    Returns:
+    - Dict[str, float]: A dictionary with the optimal 'alpha' and 'beta' parameters for the
+      Gamma distribution.
+    """
+    # Scale the bounds to mitigate optimization issues with large values
+    scaled_lower = lower / scaling_factor
+    scaled_upper = upper / scaling_factor
+
+    # Define a set of initial guesses for the optimizer
+    initial_guesses = [
+        {"alpha": scaled_lower, "beta": 1},
+        {"alpha": scaled_upper, "beta": 1},
+        {"alpha": (scaled_lower + scaled_upper) / 2, "beta": 1},
+    ]
+
+    # Run the optimization for each initial guess and collect the results
+    results = []
+    for guess in initial_guesses:
+        result = pm.find_constrained_prior(
+            pm.Gamma, 
+            lower=scaled_lower, 
+            upper=scaled_upper, 
+            mass=mass, 
+            init_guess=guess,
+            options={"maxiter": maxiter}
+        )
+        results.append(result)
+
+    # Average the 'alpha' and 'beta' parameters from the results
+    avg_result = {
+        "alpha": np.mean([r["alpha"] * scaling_factor for r in results]),
+        "beta": np.mean([r["beta"] for r in results])
+    }
+    
+    return avg_result
+
